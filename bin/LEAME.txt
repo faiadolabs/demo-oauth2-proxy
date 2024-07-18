@@ -1,0 +1,7 @@
+🚧 Si no se encuentra el binario de oauth2-proxy en esta carpeta...
+
+Descárgalo en según tu arquitectura:
+
+https://github.com/oauth2-proxy/oauth2-proxy/releases/tag/v7.6.0
+
+Descomprime y renombra colócandolo como ./bin/oauth2-proxy

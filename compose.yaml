@@ -1,0 +1,85 @@
+services:
+  keycloak:
+    build:
+      context: .
+      dockerfile: keycloak.dockerfile
+    image: my_keycloak
+    container_name: keycloak
+    ports:
+      - "8080:8080"  # Mapea el puerto 8080 del contenedor al puerto 8080 en el host
+      - "9000:9000"
+    environment:
+      # https://www.keycloak.org/server/containers
+      - KEYCLOAK_ADMIN=admin  # Nombre de usuario del admin de Keycloak
+      - KEYCLOAK_ADMIN_PASSWORD=admin  # Contraseña del admin de Keycloak
+      - KC_HEALTH_ENABLED=true
+    command: start-dev # Comando para iniciar Keycloak en modo de desarrollo
+    healthcheck:
+      test: ["CMD-SHELL", "type curl >/dev/null && curl -fs http://localhost:9000/health/ready | jq -e '.status == \"UP\"'"]
+      interval: 10s # default 30s
+      retries: 5
+      start_period: 30s
+      timeout: 5s  # default 30s
+    networks:
+      - oauth_network  # Conecta a la red definida más abajo
+
+  keycloak_setup:
+    build:
+      context: .
+      dockerfile: keycloak.dockerfile
+    image: my_keycloak
+    container_name: keycloak_setup
+    environment:
+      - KEYCLOAK_ADMIN=admin  # Nombre de usuario del admin de Keycloak
+      - KEYCLOAK_ADMIN_PASSWORD=admin  # Contraseña del admin de Keycloak
+    volumes:
+      - ./keycloak_configs/:/keycloak_configs
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: on-failure:20
+    working_dir: /keycloak_configs
+    entrypoint: ["sh", "-c", "/keycloak_configs/config_provision.sh"]
+    networks:
+      - oauth_network  # Conecta a la red definida más abajo
+
+  oauth2_proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy-nightly:20240705-alpine  # Usando la última imagen hasta la fecha de oauth2-proxy como ejemplo
+    hostname: oauth2_proxy
+    container_name: oauth2_proxy
+    restart: on-failure
+    depends_on:
+      keycloak_setup:
+        condition: service_completed_successfully
+    ports:
+      - "4180:4180"  # Mapea el puerto 4180 del contenedor al puerto 4180 en el host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OAUTH2_PROXY_ADDRESS=0.0.0.0:4180 # WARNING! Parece que esta variable de env NO la está teniendo en cuenta
+      - OAUTH2_PROXY_EMAIL_DOMAINS=*  # Dominios permitidos para el inicio de sesión
+      - OAUTH2_PROXY_COOKIE_SECURE=false
+      - OAUTH2_PROXY_COOKIE_SECRET=1234567890123456  # Secreto para las cookies (ajustar según tus necesidades)
+      - OAUTH2_PROXY_UPSTREAM=http://web:80
+      - OAUTH2_PROXY_PROVIDER=oidc  # Proveedor de OAuth2 (Keycloak en este caso)
+      - OAUTH2_PROXY_OIDC_ISSUER_URL=http://host.docker.internal:8080/realms/master  # URL del emisor Keycloak
+      - OAUTH2_PROXY_INSECURE_OIDC_ALLOW_UNVERIFIED_EMAIL=true
+      - OAUTH2_PROXY_REDIRECT_URL=http://localhost:4180/oauth2/callback  # URL de redirección
+      - OAUTH2_PROXY_CLIENT_ID=oauth2_proxy  # ID del cliente OAuth2 (ajustar según tus necesidades)
+      - OAUTH2_PROXY_CLIENT_SECRET=M1wfTHzrqb6Jp1TjAmqnvPUQnOfJPRFU  # ☠️ Definido en keycloak_configs/oauth2_proxy.json ☠️
+      - OAUTH2_PROXY_LOG_LEVEL=debug  # Establece el nivel de log a debug
+    networks:
+      - oauth_network  # Conecta a la red definida más abajo
+    command: [ '--http-address=0.0.0.0:4180' ] # Por variable de entorno no va así que se mete como argumento
+
+  web:
+    image: yeasy/simple-web:latest
+    container_name: simple_web
+    ports:
+      - "8000:80"  # Mapea el puerto 80 del contenedor al puerto 8000 en el host
+    networks:
+      - oauth_network  # Conecta a la red definida más abajo
+
+networks:
+  oauth_network:
+    driver: bridge  # Usa el controlador de red por defecto
